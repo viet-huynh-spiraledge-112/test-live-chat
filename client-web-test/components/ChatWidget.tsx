@@ -24,8 +24,8 @@ export default function ChatWidget() {
     if (existingScript) {
       // Script already exists, just initialize if widget is available
       if (window.SpiraledgeChat) {
-        // Use window.location.origin to route through Next.js proxy (avoids CORS)
-        const apiUrl = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:4000';
+        // Call directly to CRM backend API (CORS allowed via allow list)
+        const apiUrl = 'https://crm-api-staging.spiraledge.com';
         window.SpiraledgeChat.init({
           apiUrl: apiUrl,
           widgetId: '9572bb35552e3100e1ecd2be107842ce18cbc87b3a9fed4e365d08afa1addc88',
@@ -42,8 +42,8 @@ export default function ChatWidget() {
     script.async = true;
     script.onload = function() {
       if (window.SpiraledgeChat) {
-        // Use window.location.origin to route through Next.js proxy (avoids CORS)
-        const apiUrl = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:4000';
+        // Call directly to CRM backend API (CORS allowed via allow list)
+        const apiUrl = 'https://crm-api-staging.spiraledge.com';
         window.SpiraledgeChat.init({
           apiUrl: apiUrl,
           widgetId: '9572bb35552e3100e1ecd2be107842ce18cbc87b3a9fed4e365d08afa1addc88',
