@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: crm-staging
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      containers:
+        - name: frontend
+          image: us-central1-docker.pkg.dev/tend-com-test/lead-tend-com/lead-tencom:1.0
+          ports:
+            - containerPort: 3000
+          env:
+            - name: API_ENDPOINT
+              value: "http://backend:8000"
+            - name: GOOGLE_CLIENT_SECRET
+              value: "xnNuP6xLNgw0CWHReoWfy_PS"
+            - name: NEXTAUTH_URL
+              value: "https://staging-crm.tend.com"
+            - name: NEXTAUTH_SECRET
+              value: "$tr0ng_s3cr3t"
+            - name: NEXT_PUBLIC_API_URL
+              value: "https://staging-lead-api.tend.com"
+            - name: NEXT_PUBLIC_GOOGLE_CLIENT_ID
+              value: "329201074559-rtt97mkrb6mut4jqpg0189de67lrthqk.apps.googleusercontent.com"
+            - name: NEXT_PUBLIC_RECURLY_SUBDOMAIN
+              value: "tend-production"
+            - name: NEXT_PUBLIC_BASE_URL
+              value: "https://staging-crm.tend.com"
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: crm-staging
+spec:
+  selector:
+    app: frontend
+  ports:
+    - port: 3000
+      targetPort: 3000
+  type: ClusterIP

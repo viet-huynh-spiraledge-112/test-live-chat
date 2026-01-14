@@ -1,0 +1,406 @@
+pipeline {
+    agent any
+    
+    environment {
+        // GCP and Docker Registry Configuration
+        GCP_PROJECT_ID = 'tend-com-test'
+        GCP_REGION = 'us-central1'
+        DOCKER_REGISTRY = 'us-central1-docker.pkg.dev'
+        DOCKER_REPOSITORY = 'lead-tend-com'
+        IMAGE_NAME = 'lead-tencom'
+        
+        // Kubernetes Configuration
+        KUBE_NAMESPACE = 'crm-staging'
+        DEPLOYMENT_NAME = 'frontend'
+        
+        // Credentials
+        GOOGLE_CLOUD_CREDENTIALS = 'google-cloud-credentials'
+        KUBECONFIG_CREDENTIALS = 'k8s-config'
+        
+        // Build Configuration with DateTime versioning
+        DATETIME_TAG = new Date().format('yyyy-MM-dd-HHmmss', TimeZone.getTimeZone('UTC'))
+        BUILD_NUMBER_TAG = "${env.BUILD_NUMBER}"
+        GIT_COMMIT_SHORT = "${env.GIT_COMMIT?.take(7)}"
+        IMAGE_TAG = "${DATETIME_TAG}-${BUILD_NUMBER_TAG}"
+        FULL_IMAGE_URL = "${DOCKER_REGISTRY}/${GCP_PROJECT_ID}/${DOCKER_REPOSITORY}/${IMAGE_NAME}:${IMAGE_TAG}"
+    }
+    
+    stages {
+        stage('1. Checkout Source Code') {
+            steps {
+                echo "🔄 Checking out source code from Bitbucket..."
+                checkout scm
+                
+                script {
+                    // Generate datetime tag for versioning
+                    def now = new Date()
+                    env.DATETIME_TAG = now.format('yyyy-MM-dd-HHmmss', TimeZone.getTimeZone('UTC'))
+                    
+                    // Get the actual git commit hash
+                    env.GIT_COMMIT_SHORT = sh(
+                        script: "git rev-parse --short HEAD",
+                        returnStdout: true
+                    ).trim()
+                    
+                    env.IMAGE_TAG = "${env.DATETIME_TAG}-${BUILD_NUMBER_TAG}"
+                    env.FULL_IMAGE_URL = "${DOCKER_REGISTRY}/${GCP_PROJECT_ID}/${DOCKER_REPOSITORY}/${IMAGE_NAME}:${env.IMAGE_TAG}"
+                    
+                    echo "📋 Build Information:"
+                    echo "   DateTime: ${env.DATETIME_TAG}"
+                    echo "   Build Number: ${BUILD_NUMBER_TAG}"
+                    echo "   Git Commit: ${env.GIT_COMMIT_SHORT}"
+                    echo "   Image Tag: ${env.IMAGE_TAG}"
+                    echo "   Full Image URL: ${env.FULL_IMAGE_URL}"
+                }
+            }
+        }
+        
+        stage('2. Configure Google Cloud') {
+            steps {
+                echo "🔐 Configuring Google Cloud authentication..."
+                // Authenticate with Google Cloud using credentials
+                withCredentials([file(credentialsId: "${GOOGLE_CLOUD_CREDENTIALS}", variable: 'GOOGLE_CLOUD_KEY')]) {
+                    sh '''
+                        # Create credentials directory
+                        mkdir -p ${WORKSPACE}/creds
+                        chmod 700 ${WORKSPACE}/creds
+                        cat "$GOOGLE_CLOUD_KEY" > ${WORKSPACE}/creds/google-credentials.json
+                        chmod 600 ${WORKSPACE}/creds/google-credentials.json
+                        
+                        # Debug: Verify credential file was created
+                        echo "🔍 Checking credential file..."
+                        if [ -f "${WORKSPACE}/creds/google-credentials.json" ]; then
+                            echo "✅ Credential file created successfully"
+                            ls -la ${WORKSPACE}/creds/google-credentials.json
+                        else
+                            echo "❌ Failed to create credential file"
+                            exit 1
+                        fi
+                        
+                        # Authenticate with Google Cloud
+                        echo "🔐 Authenticating with Google Cloud..."
+                        gcloud auth activate-service-account --key-file="${WORKSPACE}/creds/google-credentials.json"
+                        
+                        # Verify authentication
+                        echo "👤 Current authenticated account:"
+                        gcloud auth list
+                        
+                        # Show which service account is being used
+                        echo "🔍 Service account details:"
+                        ACTIVE_ACCOUNT=$(gcloud auth list --filter=status:ACTIVE --format="value(account)")
+                        echo "Active account: ${ACTIVE_ACCOUNT}"
+                        
+                        # Test specific permissions
+                        echo "🧪 Testing Artifact Registry permissions..."
+                        gcloud artifacts repositories list --location=us-central1 --project=tend-com-test
+                        
+                        # Set project
+                        gcloud config set project tend-com-test
+                        echo "📋 Current project: $(gcloud config get-value project)"
+                        
+                        # Configure Docker for Artifact Registry
+                        echo "🐳 Configuring Docker authentication..."
+                        gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+                        
+                        # Test repository access
+                        echo "🧪 Testing repository access..."
+                        gcloud artifacts repositories describe lead-tend-com --location=us-central1 --project=tend-com-test || {
+                            echo "❌ Cannot access repository. Check permissions."
+                            exit 1
+                        }
+                        
+                        echo "✅ Google Cloud authentication configured successfully"
+                    '''
+                }
+            }
+        }
+        
+        stage('3. Build and Push Docker Image') {
+            steps {
+                echo "🐳 Building and pushing Docker image..."
+                script {
+                    sh """
+                        # Change to the front-end directory where Dockerfile is located
+                        cd ${WORKSPACE}/front-end
+                        
+                        # Build image with platform flag for AMD64
+                        docker build --platform linux/amd64 -t ${env.FULL_IMAGE_URL} . || {
+                            echo "❌ Docker build failed with status \$?"
+                            exit 1
+                        }
+                        
+                        echo "✅ Docker image built successfully: ${env.FULL_IMAGE_URL}"
+                        
+                        # Push the datetime-specific tag only
+                        docker push ${env.FULL_IMAGE_URL} || {
+                            echo "❌ Docker push failed with status \$?"
+                            exit 1
+                        }
+                        
+                        echo "✅ Image pushed successfully to GCP Artifact Registry"
+                    """
+                    
+                    // Store the image name for use in later stages
+                    env.DOCKER_IMAGE_PUSHED = env.FULL_IMAGE_URL
+                }
+            }
+        }
+        
+        stage('4. Update Kubernetes YAML') {
+            steps {
+                echo "📝 Updating Kubernetes deployment YAML with new image..."
+                script {
+                    try {
+                        sh """
+                            # Backup original YAML
+                            cp k8s/frontend-deployment.yaml k8s/frontend-deployment.yaml.backup
+                            
+                            # Update the image in the YAML file
+                            sed -i 's|image: us-central1-docker.pkg.dev/tend-com-test/lead-tend-com/lead-tencom:.*|image: ${env.FULL_IMAGE_URL}|g' k8s/frontend-deployment.yaml
+                            
+                            echo "✅ Updated YAML file with new image: ${env.FULL_IMAGE_URL}"
+                            
+                            # Show the diff
+                            echo "📋 Changes made to YAML:"
+                            diff k8s/frontend-deployment.yaml.backup k8s/frontend-deployment.yaml || true
+                        """
+                    } catch (Exception e) {
+                        error "❌ Failed to update YAML file: ${e.getMessage()}"
+                    }
+                }
+            }
+        }
+        
+        stage('5. Install kubectl and GKE plugin') {
+            steps {
+                echo "🔧 Installing kubectl and GKE plugin..."
+                sh '''
+                    # Create local bin directory
+                    mkdir -p ${WORKSPACE}/bin
+                    
+                    # Download and install kubectl
+                    echo "📦 Downloading kubectl..."
+                    curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+                    chmod +x kubectl
+                    mv kubectl ${WORKSPACE}/bin/
+                    
+                    # Download and install Google Cloud SDK
+                    echo "📦 Downloading Google Cloud SDK..."
+                    curl -O https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-458.0.0-linux-x86_64.tar.gz
+                    tar -xf google-cloud-cli-458.0.0-linux-x86_64.tar.gz
+                    
+                    # Install the GKE auth plugin from the SDK
+                    echo "📦 Installing GKE auth plugin..."
+                    ./google-cloud-sdk/install.sh --quiet --additional-components gke-gcloud-auth-plugin kubectl
+                    
+                    # Copy the GKE auth plugin to our bin directory
+                    cp ./google-cloud-sdk/bin/gke-gcloud-auth-plugin ${WORKSPACE}/bin/
+                    chmod +x ${WORKSPACE}/bin/gke-gcloud-auth-plugin
+                    
+                    # Clean up SDK files
+                    echo "🧹 Cleaning up SDK files..."
+                    rm -rf google-cloud-sdk google-cloud-cli-458.0.0-linux-x86_64.tar.gz
+                    
+                    # Set up environment for GKE auth plugin
+                    export USE_GKE_GCLOUD_AUTH_PLUGIN=True
+                    export CLOUDSDK_PYTHON_SITEPACKAGES=1
+                    export PATH=${WORKSPACE}/bin:$PATH
+                    
+                    # Verify installations
+                    echo "✅ Kubectl version:"
+                    ${WORKSPACE}/bin/kubectl version --client
+                    echo "✅ GKE auth plugin version:"
+                    ${WORKSPACE}/bin/gke-gcloud-auth-plugin --version || echo "GKE plugin check completed"
+                    
+                    # Show binary locations and permissions
+                    echo "📂 Binary locations and permissions:"
+                    ls -l ${WORKSPACE}/bin/
+                    file ${WORKSPACE}/bin/gke-gcloud-auth-plugin
+                    
+                    echo "✅ Kubernetes tools installation completed"
+                '''
+            }
+        }
+        
+        stage('6. Authenticate to Kubernetes Cluster') {
+            steps {
+                echo "🔑 Authenticating to the correct Kubernetes cluster..."
+                script {
+                    try {
+                        sh """
+                            # Set required environment variables
+                            export USE_GKE_GCLOUD_AUTH_PLUGIN=True
+                            export CLOUDSDK_PYTHON_SITEPACKAGES=1
+                            export GOOGLE_APPLICATION_CREDENTIALS="${WORKSPACE}/creds/google-credentials.json"
+                            export PATH=${WORKSPACE}/bin:\$PATH
+                            
+                            # Authenticate to the specific GKE cluster
+                            echo "🔐 Getting credentials for cluster: app-staging in region: us-central1"
+                            gcloud container clusters get-credentials app-staging \
+                                --region us-central1 \
+                                --project tend-com-test
+                            
+                            # Verify we're connected to the correct cluster
+                            echo "📍 Current kubectl context:"
+                            ${WORKSPACE}/bin/kubectl config current-context
+                            
+                            # Verify we can access the target namespace
+                            echo "🔍 Verifying access to namespace: ${KUBE_NAMESPACE}"
+                            ${WORKSPACE}/bin/kubectl get namespace ${KUBE_NAMESPACE}
+                            
+                            # Show current pods in the namespace for reference
+                            echo "📊 Current pods in ${KUBE_NAMESPACE} namespace:"
+                            ${WORKSPACE}/bin/kubectl get pods -n ${KUBE_NAMESPACE}
+                            
+                            echo "✅ Successfully authenticated to Kubernetes cluster"
+                        """
+                    } catch (Exception e) {
+                        error "❌ Failed to authenticate to Kubernetes cluster: ${e.getMessage()}"
+                    }
+                }
+            }
+        }
+        
+        stage('7. Deploy to Kubernetes') {
+            steps {
+                echo "🚀 Deploying frontend to Kubernetes..."
+                script {
+                    try {
+                        sh """
+                            # Set environment variables
+                            export USE_GKE_GCLOUD_AUTH_PLUGIN=True
+                            export CLOUDSDK_PYTHON_SITEPACKAGES=1
+                            export PATH=${WORKSPACE}/bin:\$PATH
+                            
+                            # Confirm we're still on the correct context
+                            echo "📍 Deploying to cluster: \$(${WORKSPACE}/bin/kubectl config current-context)"
+                            echo "📍 Target namespace: ${KUBE_NAMESPACE}"
+                            
+                            # Apply the updated deployment
+                            ${WORKSPACE}/bin/kubectl apply -f k8s/frontend-deployment.yaml
+                            
+                            # Wait for deployment to be ready
+                            echo "⏳ Waiting for deployment to be ready..."
+                            ${WORKSPACE}/bin/kubectl rollout status deployment/${DEPLOYMENT_NAME} -n ${KUBE_NAMESPACE} --timeout=300s
+                            
+                            echo "✅ Frontend deployment completed successfully"
+                        """
+                    } catch (Exception e) {
+                        error "❌ Failed to deploy to Kubernetes: ${e.getMessage()}"
+                    }
+                }
+            }
+        }
+        
+        stage('8. Check Pod Status and Logs') {
+            steps {
+                echo "🔍 Checking pod status and logs..."
+                script {
+                    try {
+                        sh """
+                            # Set environment variables
+                            export USE_GKE_GCLOUD_AUTH_PLUGIN=True
+                            export CLOUDSDK_PYTHON_SITEPACKAGES=1
+                            export PATH=${WORKSPACE}/bin:\$PATH
+                            
+                            echo "📊 Current pod status in ${KUBE_NAMESPACE} namespace:"
+                            ${WORKSPACE}/bin/kubectl get pods -n ${KUBE_NAMESPACE} -l app=frontend
+                            
+                            echo ""
+                            echo "📋 Deployment status:"
+                            ${WORKSPACE}/bin/kubectl get deployment ${DEPLOYMENT_NAME} -n ${KUBE_NAMESPACE}
+                            
+                            echo ""
+                            echo "🔍 Recent logs from the new pod:"
+                            ${WORKSPACE}/bin/kubectl logs -n ${KUBE_NAMESPACE} deployment/${DEPLOYMENT_NAME} --tail=20
+                            
+                            echo ""
+                            echo "🌐 Service status:"
+                            ${WORKSPACE}/bin/kubectl get services -n ${KUBE_NAMESPACE}
+                            
+                            echo "✅ Pod status check completed"
+                        """
+                    } catch (Exception e) {
+                        echo "⚠️ Warning: Could not retrieve all pod information: ${e.getMessage()}"
+                    }
+                }
+            }
+        }
+    }
+    
+    post {
+        always {
+            echo "🧹 Cleaning up..."
+            script {
+                try {
+                    // Clean up local Docker images to save space
+                    sh """
+                        # Check if image exists before trying to remove it
+                        if docker images --format "table {{.Repository}}:{{.Tag}}" | grep -q "${env.DOCKER_IMAGE_PUSHED}"; then
+                            echo "🗑️ Removing local image: ${env.DOCKER_IMAGE_PUSHED}"
+                            docker rmi ${env.DOCKER_IMAGE_PUSHED} || echo "⚠️ Failed to remove image, but continuing..."
+                        else
+                            echo "ℹ️ Image ${env.DOCKER_IMAGE_PUSHED} not found locally (already removed or build failed)"
+                        fi
+                        
+                        # Clean up any dangling images and build cache
+                        echo "🧹 Cleaning up dangling images and build cache..."
+                        docker system prune -f
+                        
+                        # Clean up credential file
+                        if [ -d "${WORKSPACE}/creds" ]; then
+                            echo "🔐 Cleaning up credential files..."
+                            rm -rf ${WORKSPACE}/creds
+                        fi
+                        
+                        # Clean up kubectl and GKE plugin binaries
+                        if [ -d "${WORKSPACE}/bin" ]; then
+                            echo "🧹 Cleaning up kubectl and GKE plugin binaries..."
+                            rm -rf ${WORKSPACE}/bin
+                        fi
+                    """
+                } catch (Exception e) {
+                    echo "⚠️ Warning: Cleanup failed: ${e.getMessage()}"
+                }
+            }
+        }
+        
+        success {
+            echo """
+            ✅ 🎉 FRONTEND DEPLOYMENT SUCCESSFUL! 🎉
+            
+            📋 Build Summary:
+            • Deployment Time: ${env.DATETIME_TAG}
+            • Build Number: ${BUILD_NUMBER_TAG}
+            • Git Commit: ${env.GIT_COMMIT_SHORT}
+            • Image Tag: ${env.IMAGE_TAG}
+            • Deployed Image: ${env.FULL_IMAGE_URL}
+            • Target Cluster: app-staging (${GCP_REGION})
+            • Namespace: ${KUBE_NAMESPACE}
+            
+            🌐 Access URLs:
+            • Frontend: http://staging-crm.tend.com
+            • Direct IP: http://34.59.6.162
+            
+            🔄 Rollback Information:
+            • Previous versions available in: kubectl rollout history deployment/frontend -n crm-staging
+            • To rollback use: kubectl rollout undo deployment/frontend -n crm-staging
+            • For specific version: kubectl set image deployment/frontend frontend=${env.FULL_IMAGE_URL} -n crm-staging
+            
+            📦 Version Management:
+            • Using datetime-based versioning for reliable rollbacks
+            • No 'latest' tag - each deployment has unique timestamp
+            • All versions preserved in Artifact Registry for easy rollback
+            """
+        }
+        
+        failure {
+            echo """
+            ❌ 🚨 FRONTEND DEPLOYMENT FAILED! 🚨
+            
+            Please check the logs above for details.
+            Build Number: ${BUILD_NUMBER_TAG}
+            """
+        }
+    }
+} 

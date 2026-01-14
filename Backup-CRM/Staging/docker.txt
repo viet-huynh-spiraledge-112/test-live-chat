@@ -1,0 +1,44 @@
+FROM node:18-alpine AS builder
+
+WORKDIR /app
+
+# Install pnpm
+RUN npm install -g pnpm
+
+# Copy package.json first
+COPY package.json ./
+
+# Install dependencies and generate a fresh lock file
+RUN pnpm install
+
+# Copy the rest of the application
+COPY . .
+
+# Set environment variables for Next.js telemetry and build
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV NODE_ENV=production
+
+# Build the application
+RUN pnpm build
+
+# Production image
+FROM node:18-alpine AS runner
+WORKDIR /app
+
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+
+# Copy necessary files from builder
+COPY --from=builder /app/next.config.mjs ./
+COPY --from=builder /app/public ./public
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
+
+# Expose the port
+EXPOSE 3000
+
+ENV PORT 3000
+ENV HOSTNAME "0.0.0.0"
+
+# Start the application
+CMD ["node", "server.js"] 

@@ -1,0 +1,202 @@
+pipeline {
+    agent any
+    
+    parameters {
+        string(
+            name: 'VERSION',
+            defaultValue: '1.37',
+            description: 'Version tag for the Docker image',
+            trim: true
+        )
+    }
+    
+    environment {
+        // Project specific variables
+        PROJECT_ID = 'tend-180010'
+        ARTIFACT_REGISTRY = 'us-central1-docker.pkg.dev'
+        IMAGE_NAME = 'lead-tencom'
+        REPOSITORY = 'lead-tend-com'
+        // Credentials
+        GOOGLE_CLOUD_CREDENTIALS = 'google-cloud-credentials-pro'
+        KUBECONFIG_CREDENTIALS = 'k8s-config-pro'
+        K8S_DEPLOYMENT_PATH = 'k8s/frontend-deployment.yaml'
+        // Environment configuration
+        PATH = "${env.WORKSPACE}/bin:${env.PATH}"
+        USE_GKE_GCLOUD_AUTH_PLUGIN = 'True'
+        CLOUDSDK_PYTHON_SITEPACKAGES = '1'
+        GOOGLE_CLOUD_SDK_VERSION = '458.0.0'
+        CLOUDSDK_CONTAINER_USE_APPLICATION_DEFAULT_CREDENTIALS = 'true'
+        KUBECONFIG = "${env.WORKSPACE}/.kube/config"
+        GOOGLE_APPLICATION_CREDENTIALS = "${env.WORKSPACE}/google-credentials.json"
+    }
+    
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+        
+        stage('Configure Google Cloud') {
+            steps {
+                // Authenticate with Google Cloud using credentials
+                withCredentials([file(credentialsId: "${GOOGLE_CLOUD_CREDENTIALS}", variable: 'GOOGLE_CLOUD_KEY')]) {
+                    sh '''
+                        # Create credentials directory
+                        mkdir -p ${WORKSPACE}/creds
+                        chmod 700 ${WORKSPACE}/creds
+                        cat "$GOOGLE_CLOUD_KEY" > ${WORKSPACE}/creds/google-credentials.json
+                        chmod 600 ${WORKSPACE}/creds/google-credentials.json
+                        
+                        # Authenticate with Google Cloud
+                        gcloud auth activate-service-account --key-file="${WORKSPACE}/creds/google-credentials.json"
+                        
+                        # Configure Docker for Artifact Registry
+                        gcloud auth configure-docker ${ARTIFACT_REGISTRY} --quiet
+                    '''
+                }
+            }
+        }
+        
+        stage('Build and Push Docker Image') {
+            steps {
+                script {
+                    // Generate a timestamp for unique image tag
+                    def timestamp = new Date().format('yyyyMMdd-HHmmss')
+                    // Create unique image name using version and timestamp
+                    def dockerImage = "${ARTIFACT_REGISTRY}/${PROJECT_ID}/${REPOSITORY}/${IMAGE_NAME}:${params.VERSION}-${timestamp}"
+                    
+                    withCredentials([file(credentialsId: "${GOOGLE_CLOUD_CREDENTIALS}", variable: 'GOOGLE_CLOUD_KEY')]) {
+                        sh """
+                            # Change to the front-end directory where Dockerfile is located
+                            cd ${WORKSPACE}/front-end
+                            
+                            # Build image with platform flag for AMD64
+                            docker build --platform linux/amd64 -t ${dockerImage} . || {
+                                echo "Docker build failed with status \$?"
+                                exit 1
+                            }
+                            
+                            # Push image to Google Artifact Registry
+                            docker push ${dockerImage} || {
+                                echo "Docker push failed with status \$?"
+                                exit 1
+                            }
+                        """
+                    }
+                    
+                    // Store the image name for use in later stages
+                    env.FULL_IMAGE_NAME = dockerImage
+                }
+            }
+        }
+        
+        stage('Install kubectl and GKE plugin') {
+            steps {
+                sh '''
+                    # Create local bin directory
+                    mkdir -p ${WORKSPACE}/bin
+                    
+                    # Download and install kubectl
+                    curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+                    chmod +x kubectl
+                    mv kubectl ${WORKSPACE}/bin/
+                    
+                    # Download and install Google Cloud SDK
+                    curl -O https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-458.0.0-linux-x86_64.tar.gz
+                    tar -xf google-cloud-cli-458.0.0-linux-x86_64.tar.gz
+                    
+                    # Install the GKE auth plugin
+                    ./google-cloud-sdk/install.sh --quiet --additional-components gke-gcloud-auth-plugin kubectl
+                    
+                    # Copy the GKE auth plugin to bin directory
+                    cp ./google-cloud-sdk/bin/gke-gcloud-auth-plugin ${WORKSPACE}/bin/
+                    chmod +x ${WORKSPACE}/bin/gke-gcloud-auth-plugin
+                    
+                    # Clean up SDK files
+                    rm -rf google-cloud-sdk google-cloud-cli-458.0.0-linux-x86_64.tar.gz
+                    
+                    # Set environment for GKE auth plugin
+                    export USE_GKE_GCLOUD_AUTH_PLUGIN=True
+                    export CLOUDSDK_PYTHON_SITEPACKAGES=1
+                    export PATH=${WORKSPACE}/bin:$PATH
+                '''
+            }
+        }
+        
+        stage('Deploy to Kubernetes') {
+            steps {
+                withCredentials([
+                    file(credentialsId: "${GOOGLE_CLOUD_CREDENTIALS}", variable: 'GOOGLE_CLOUD_KEY'),
+                    file(credentialsId: "${KUBECONFIG_CREDENTIALS}", variable: 'KUBECONFIG')
+                ]) {
+                    script {
+                        sh """#!/bin/bash
+                            # Set explicit paths
+                            export PATH=\${WORKSPACE}/bin:\$PATH
+                            export USE_GKE_GCLOUD_AUTH_PLUGIN=True
+                            export GOOGLE_APPLICATION_CREDENTIALS=\${WORKSPACE}/creds/google-credentials.json
+                            export CLOUDSDK_CONTAINER_USE_APPLICATION_DEFAULT_CREDENTIALS=true
+                            
+                            # Get GKE credentials (update cluster name as needed)
+                            gcloud container clusters get-credentials tendproduction \
+                                --region us-central1 \
+                                --project ${PROJECT_ID}
+                            
+                            # Update the image in deployment yaml
+                            awk -v img="${env.FULL_IMAGE_NAME}" '
+                                /image: us-central1-docker.pkg.dev\\/tend-180010\\/lead-tend-com\\/lead-tencom:/ {
+                                    sub(/image: .*/, "image: " img)
+                                }
+                                { print }
+                            ' ${K8S_DEPLOYMENT_PATH} > ${K8S_DEPLOYMENT_PATH}.tmp && mv ${K8S_DEPLOYMENT_PATH}.tmp ${K8S_DEPLOYMENT_PATH}
+                            
+                            # Apply the updated deployment
+                            KUBECONFIG=\${KUBECONFIG} \${WORKSPACE}/bin/kubectl apply -f ${K8S_DEPLOYMENT_PATH}
+                            
+                            # Wait for rollout to complete
+                            KUBECONFIG=\${KUBECONFIG} \${WORKSPACE}/bin/kubectl rollout status deployment/frontend -n farmleadaggregator
+                            
+                            # Show pods status
+                            KUBECONFIG=\${KUBECONFIG} \${WORKSPACE}/bin/kubectl get pods -n farmleadaggregator
+                        """
+                    }
+                }
+            }
+        }
+    }
+    
+    post {
+        always {
+            script {
+                // Clean up sensitive files
+                sh '''#!/bin/bash
+                    # Securely remove credentials
+                    if [ -d "${WORKSPACE}/creds" ]; then
+                        rm -rf ${WORKSPACE}/creds
+                    fi
+                    
+                    # Clean up other sensitive directories
+                    rm -rf ${WORKSPACE}/.config ${WORKSPACE}/.kube
+                '''
+                
+                // Clean up Docker images if FULL_IMAGE_NAME exists
+                if (env.FULL_IMAGE_NAME) {
+                    sh """#!/bin/bash
+                        # Remove any dangling images
+                        docker image prune -f || true
+                        
+                        # Remove the specific image we built
+                        docker rmi ${env.FULL_IMAGE_NAME} || true
+                    """
+                }
+            }
+        }
+        success {
+            echo 'Frontend deployment completed successfully!'
+        }
+        failure {
+            echo 'Frontend deployment failed!'
+        }
+    }
+}

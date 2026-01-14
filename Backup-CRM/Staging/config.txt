@@ -1,0 +1,73 @@
+// import { EMAIL_COMPOSER_ENDPOINT } from './utils/constants'
+
+let userConfig = undefined
+try {
+  userConfig = await import('./v0-user-next.config')
+} catch (e) {
+  // ignore error
+}
+
+/** @type {import('next').NextConfig} */
+const nextConfig = {
+  eslint: {
+    ignoreDuringBuilds: true,
+  },
+  typescript: {
+    ignoreBuildErrors: true,
+  },
+  images: {
+    unoptimized: true,
+  },
+  output: 'standalone',
+  experimental: {
+    webpackBuildWorker: true,
+    parallelServerBuildTraces: true,
+    parallelServerCompiles: true,
+  },
+  poweredByHeader: false,
+  reactStrictMode: false,
+  async rewrites() {
+    const apiEndpoint = process.env.API_ENDPOINT || 'https://staging-lead-api.tend.com';
+    const emailComposerEndpoint = 'https://composer-staging.tend.com/';
+    return {
+      beforeFiles: [
+        {
+          source: '/api/:path*',
+          destination: `${apiEndpoint}/api/:path*`,
+        },
+        {
+          source: '/email-template/:path*',
+          destination: `${emailComposerEndpoint}/:path*`,
+        },
+      ],
+    };
+  },
+  env: {
+    NEXT_PUBLIC_BASE_URL: process.env.NEXT_PUBLIC_BASE_URL || '',
+    API_ENDPOINT: process.env.API_ENDPOINT || 'https://staging-lead-api.tend.com',
+  },
+}
+
+mergeConfig(nextConfig, userConfig)
+
+function mergeConfig(nextConfig, userConfig) {
+  if (!userConfig) {
+    return
+  }
+
+  for (const key in userConfig) {
+    if (
+      typeof nextConfig[key] === 'object' &&
+      !Array.isArray(nextConfig[key])
+    ) {
+      nextConfig[key] = {
+        ...nextConfig[key],
+        ...userConfig[key],
+      }
+    } else {
+      nextConfig[key] = userConfig[key]
+    }
+  }
+}
+
+export default nextConfig
