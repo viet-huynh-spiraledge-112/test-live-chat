@@ -7,7 +7,7 @@ declare global {
     SpiraledgeChat?: {
       init: (config: {
         apiUrl: string;
-        widgetKey: string;
+        widgetId: string;
         pusherKey: string;
         pusherCluster: string;
       }) => void;
@@ -28,7 +28,7 @@ export default function ChatWidget() {
         const apiUrl = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:4000';
         window.SpiraledgeChat.init({
           apiUrl: apiUrl,
-          widgetKey: '9572bb35552e3100e1ecd2be107842ce18cbc87b3a9fed4e365d08afa1addc88',
+          widgetId: '9572bb35552e3100e1ecd2be107842ce18cbc87b3a9fed4e365d08afa1addc88',
           pusherKey: '64b7865cd83eddfb95c1',
           pusherCluster: 'mt1'
         });
@@ -46,7 +46,7 @@ export default function ChatWidget() {
         const apiUrl = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:4000';
         window.SpiraledgeChat.init({
           apiUrl: apiUrl,
-          widgetKey: '9572bb35552e3100e1ecd2be107842ce18cbc87b3a9fed4e365d08afa1addc88',
+          widgetId: '9572bb35552e3100e1ecd2be107842ce18cbc87b3a9fed4e365d08afa1addc88',
           pusherKey: '64b7865cd83eddfb95c1',
           pusherCluster: 'mt1'
         });
