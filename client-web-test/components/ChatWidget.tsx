@@ -18,7 +18,7 @@ declare global {
 export default function ChatWidget() {
   useEffect(() => {
     // Check if script is already loaded
-    const scriptSrc = 'https://storage.googleapis.com/resource-staging.tend.com/crm/widget/widget-2.js';
+    const scriptSrc = 'https://storage.googleapis.com/resource-staging.tend.com/crm/widget/widget-3.js';
     const existingScript = document.querySelector(`script[src="${scriptSrc}"]`);
     
     const initWidget = () => {
