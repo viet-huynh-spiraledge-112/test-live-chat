@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 export async function POST(request: NextRequest) {
-  console.log('[Widget Init Route] POST request received');
+  // Log để debug - this should be called if route is matched
+  console.log('[Widget Init Route] POST handler called - Route matched!');
   console.log('[Widget Init Route] Request URL:', request.url);
   console.log('[Widget Init Route] Request method:', request.method);
+  console.log('[Widget Init Route] Request headers:', Object.fromEntries(request.headers.entries()));
   
   try {
     const url = new URL(request.url);
@@ -78,6 +80,14 @@ export async function POST(request: NextRequest) {
       { status: 500 }
     );
   }
+}
+
+export async function GET(request: NextRequest) {
+  // Handle GET requests (should not happen, but just in case)
+  return NextResponse.json(
+    { error: 'Method not allowed. Use POST instead.' },
+    { status: 405, headers: { Allow: 'POST, OPTIONS' } }
+  );
 }
 
 export async function OPTIONS(request: NextRequest) {
