@@ -29,7 +29,8 @@ export default function ChatWidget() {
           const apiUrl = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:4000';
           const widgetKey = '9572bb35552e3100e1ecd2be107842ce18cbc87b3a9fed4e365d08afa1addc88';
           
-          // Use widgetKey if widgetId is null/undefined - set widgetId from widgetKey
+          // Widget-3.js checks for widgetId, so we need to ensure widgetId is always set
+          // If widgetId would be null, use widgetKey as fallback
           const config: {
             apiUrl: string;
             widgetId?: string | null;
@@ -38,11 +39,16 @@ export default function ChatWidget() {
             pusherCluster: string;
           } = {
             apiUrl: apiUrl,
-            widgetId: widgetKey, // Set widgetId from widgetKey if widgetId is null
-            widgetKey: widgetKey, // Also provide widgetKey
+            widgetId: widgetKey || null, // Always set widgetId from widgetKey (widget-3.js requires widgetId)
+            widgetKey: widgetKey, // Also provide widgetKey for reference
             pusherKey: '64b7865cd83eddfb95c1',
             pusherCluster: 'mt1'
           };
+          
+          // Ensure widgetId is never null/undefined - widget-3.js checks for it
+          if (!config.widgetId && config.widgetKey) {
+            config.widgetId = config.widgetKey;
+          }
           
           console.log('[ChatWidget] Initializing with config:', config);
           
