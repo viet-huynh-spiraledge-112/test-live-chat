@@ -35,13 +35,33 @@ export async function PATCH(
   return proxyRequest(request, await params);
 }
 
+export async function OPTIONS(
+  request: NextRequest,
+  { params }: { params: Promise<{ path: string[] }> }
+) {
+  // Handle CORS preflight
+  return new NextResponse(null, {
+    status: 200,
+    headers: {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, PATCH, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    },
+  });
+}
+
 async function proxyRequest(
   request: NextRequest,
   params: { path: string[] }
 ) {
   try {
-    const path = params.path.join('/');
+    let path = params.path.join('/');
     const url = new URL(request.url);
+    
+    // Handle trailing slash - remove it to avoid redirect issues
+    if (path.endsWith('/')) {
+      path = path.slice(0, -1);
+    }
     
     // Build the target URL
     const targetUrl = `https://crm-api-staging.spiraledge.com/api/widget/${path}${url.search}`;
