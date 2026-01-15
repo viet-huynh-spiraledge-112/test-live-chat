@@ -11,6 +11,11 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ path: string[] }> }
 ) {
+  const path = (await params).path.join('/');
+  // Skip if this is the init route - let the specific route handle it
+  if (path === 'init') {
+    return new NextResponse(null, { status: 404 });
+  }
   return proxyRequest(request, await params);
 }
 

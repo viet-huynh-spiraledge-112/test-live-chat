@@ -1,11 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 export async function POST(request: NextRequest) {
+  console.log('[Widget Init Route] POST request received');
+  console.log('[Widget Init Route] Request URL:', request.url);
+  console.log('[Widget Init Route] Request method:', request.method);
+  
   try {
     const url = new URL(request.url);
     
-    // Build the target URL
+    // Build the target URL - ensure no trailing slash
     const targetUrl = `https://crm-api-staging.spiraledge.com/api/widget/init${url.search}`;
+    console.log('[Widget Init Route] Proxying to:', targetUrl);
     
     // Get request body
     let body: BodyInit | undefined;
@@ -49,6 +54,7 @@ export async function POST(request: NextRequest) {
 
     // Get response data
     const responseText = await response.text();
+    console.log('[Widget Init Route] Response status:', response.status);
     
     // Create response with same status
     const nextResponse = new NextResponse(responseText, {
