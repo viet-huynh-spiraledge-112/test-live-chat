@@ -5,18 +5,16 @@ export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
   
   // Handle trailing slash for POST requests to API routes
-  // This prevents Next.js from redirecting POST to GET
+  // Rewrite preserves method and body automatically
   if (
     request.method === 'POST' &&
-    pathname.startsWith('/api/') &&
+    pathname.startsWith('/api/widget/') &&
     pathname.endsWith('/') &&
-    pathname !== '/api/'
+    pathname !== '/api/widget/'
   ) {
-    // Remove trailing slash and redirect, but preserve POST method
+    // Remove trailing slash and rewrite (preserves POST method and body)
     const url = request.nextUrl.clone();
     url.pathname = pathname.slice(0, -1);
-    
-    // Create a new request with the same method and body
     return NextResponse.rewrite(url);
   }
   
@@ -24,5 +22,5 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: '/api/:path*',
+  matcher: '/api/widget/:path*',
 };
