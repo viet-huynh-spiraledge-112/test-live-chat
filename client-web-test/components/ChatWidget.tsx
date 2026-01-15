@@ -7,7 +7,7 @@ declare global {
     SpiraledgeChat?: {
       init: (config: {
         apiUrl: string;
-        widgetId: string;
+        widgetKey: string;
         pusherKey: string;
         pusherCluster: string;
       }) => void;
@@ -25,10 +25,11 @@ export default function ChatWidget() {
       // Script already exists, just initialize if widget is available
       if (window.SpiraledgeChat) {
         // Call directly to CRM backend API (CORS allowed via allow list)
-        const apiUrl = 'https://crm-api-staging.spiraledge.com';
+        // Widget will append /api/widget/init/ to this URL
+        const apiUrl = 'https://crm-api-staging.spiraledge.com/api';
         window.SpiraledgeChat.init({
           apiUrl: apiUrl,
-          widgetId: '9572bb35552e3100e1ecd2be107842ce18cbc87b3a9fed4e365d08afa1addc88',
+          widgetKey: '9572bb35552e3100e1ecd2be107842ce18cbc87b3a9fed4e365d08afa1addc88',
           pusherKey: '64b7865cd83eddfb95c1',
           pusherCluster: 'mt1'
         });
@@ -43,10 +44,11 @@ export default function ChatWidget() {
     script.onload = function() {
       if (window.SpiraledgeChat) {
         // Call directly to CRM backend API (CORS allowed via allow list)
-        const apiUrl = 'https://crm-api-staging.spiraledge.com';
+        // Widget will append /api/widget/init/ to this URL
+        const apiUrl = 'https://crm-api-staging.spiraledge.com/api';
         window.SpiraledgeChat.init({
           apiUrl: apiUrl,
-          widgetId: '9572bb35552e3100e1ecd2be107842ce18cbc87b3a9fed4e365d08afa1addc88',
+          widgetKey: '9572bb35552e3100e1ecd2be107842ce18cbc87b3a9fed4e365d08afa1addc88',
           pusherKey: '64b7865cd83eddfb95c1',
           pusherCluster: 'mt1'
         });
