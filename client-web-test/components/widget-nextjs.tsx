@@ -31,6 +31,7 @@ export function SpiraledgeChatWidget({
   const widgetIdRef = useRef(widgetId);
   const pusherKeyRef = useRef(pusherKey);
   const pusherClusterRef = useRef(pusherCluster);
+  const isInitializingRef = useRef(false); // Prevent duplicate init
   
   // Update refs when props change
   useEffect(() => {
@@ -41,6 +42,12 @@ export function SpiraledgeChatWidget({
   }, [apiUrl, widgetId, pusherKey, pusherCluster]);
 
   const initializeWidget = useCallback(() => {
+    // Prevent duplicate initialization
+    if (isInitializingRef.current) {
+      console.log('[SpiraledgeChat] Already initializing, skipping...');
+      return;
+    }
+    
     // Retry mechanism in case global isn't immediately available
     const tryInit = (attempts = 0) => {
       // Always use latest props from refs
@@ -59,16 +66,27 @@ export function SpiraledgeChatWidget({
             return;
           }
           
+          // Check if already initialized
+          const widgetState = window.SpiraledgeChat.getState?.();
+          if (widgetState?.isInitialized) {
+            console.log('[SpiraledgeChat] Already initialized, skipping...');
+            return;
+          }
+          
+          isInitializingRef.current = true;
           console.log('Initializing Spiraledge widget with config:', currentConfig);
           window.SpiraledgeChat.init(currentConfig);
+          isInitializingRef.current = false;
         } catch (error) {
           console.error('Failed to initialize Spiraledge widget:', error);
+          isInitializingRef.current = false;
         }
       } else if (attempts < 5) {
         // Retry up to 5 times with increasing delay
         setTimeout(() => tryInit(attempts + 1), 100 * (attempts + 1));
       } else {
         console.error('SpiraledgeChat not available after multiple attempts');
+        isInitializingRef.current = false;
       }
     };
     
