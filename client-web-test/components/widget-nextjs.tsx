@@ -92,7 +92,7 @@ export function SpiraledgeChatWidget({
       />
       <Script
         id="spiraledge-widget"
-        src="https://storage.googleapis.com/resource-staging.tend.com/crm/widget/widget-6.js"
+        src="https://storage.googleapis.com/resource-staging.tend.com/crm/widget/widget-7.js"
         strategy="afterInteractive"
         onReady={handleScriptReady}
         onError={handleScriptError}
