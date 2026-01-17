@@ -33,6 +33,7 @@ export function SpiraledgeChatWidget({
   const pusherKeyRef = useRef(pusherKey);
   const pusherClusterRef = useRef(pusherCluster);
   const isInitializingRef = useRef(false); // Prevent duplicate init
+  const hasInitializedRef = useRef(false); // Track if ever initialized
   
   // Update refs when props change
   useEffect(() => {
@@ -42,7 +43,44 @@ export function SpiraledgeChatWidget({
     pusherClusterRef.current = pusherCluster;
   }, [apiUrl, widgetId, pusherKey, pusherCluster]);
 
+  // Monitor and remove duplicate widget elements
+  useEffect(() => {
+    const checkForDuplicates = () => {
+      const widgets = document.querySelectorAll('#spiraledge-chat-widget');
+      if (widgets.length > 1) {
+        console.warn(`[SpiraledgeChat] Found ${widgets.length} widget elements, removing duplicates...`);
+        // Keep the first one, remove the rest
+        for (let i = 1; i < widgets.length; i++) {
+          widgets[i].remove();
+        }
+      }
+    };
+
+    // Check immediately
+    checkForDuplicates();
+
+    // Set up interval to check periodically (in case duplicates are created later)
+    const interval = setInterval(checkForDuplicates, 1000);
+
+    return () => clearInterval(interval);
+  }, []);
+
   const initializeWidget = useCallback(() => {
+    console.log('[DEBUG] initializeWidget called, hasInitialized:', hasInitializedRef.current);
+    
+    // Check if widget DOM element already exists
+    const existingWidget = document.getElementById('spiraledge-chat-widget');
+    if (existingWidget) {
+      console.log('[SpiraledgeChat] Widget DOM element already exists, skipping initialization...');
+      return;
+    }
+    
+    // Skip if already initialized once
+    if (hasInitializedRef.current) {
+      console.log('[SpiraledgeChat] Already initialized once, skipping...');
+      return;
+    }
+    
     // Prevent duplicate initialization
     if (isInitializingRef.current) {
       console.log('[SpiraledgeChat] Already initializing, skipping...');
@@ -74,9 +112,16 @@ export function SpiraledgeChatWidget({
             return;
           }
           
+          // Double-check DOM element doesn't exist before init
+          if (document.getElementById('spiraledge-chat-widget')) {
+            console.log('[SpiraledgeChat] Widget DOM element found before init, skipping...');
+            return;
+          }
+          
           isInitializingRef.current = true;
           console.log('Initializing Spiraledge widget with config:', currentConfig);
           window.SpiraledgeChat.init(currentConfig);
+          hasInitializedRef.current = true; // Mark as initialized
           isInitializingRef.current = false;
         } catch (error) {
           console.error('Failed to initialize Spiraledge widget:', error);
