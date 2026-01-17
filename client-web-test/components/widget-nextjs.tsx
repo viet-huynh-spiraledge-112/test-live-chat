@@ -12,6 +12,7 @@ interface SpiraledgeChatWidgetProps {
 
 interface SpiraledgeChat {
   init: (config: SpiraledgeChatWidgetProps) => void;
+  getState?: () => { isInitialized: boolean };
 }
 
 declare global {
