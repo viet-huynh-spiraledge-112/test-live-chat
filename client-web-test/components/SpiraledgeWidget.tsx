@@ -82,6 +82,11 @@ export default function SpiraledgeWidget({ config }: SpiraledgeWidgetProps) {
   return (
     <>
       <Script
+        id="pusher-js"
+        src="https://js.pusher.com/8.4.0/pusher.min.js"
+        strategy="beforeInteractive"
+      />
+      <Script
         id="spiraledge-widget"
         src="https://storage.googleapis.com/resource-staging.tend.com/crm/widget/widget-6.js"
         strategy="afterInteractive"
